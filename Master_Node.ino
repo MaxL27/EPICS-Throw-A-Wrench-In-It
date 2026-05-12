@@ -1,93 +1,78 @@
-#include <WiFi.h>
-#include <esp_now.h>
+#include <Arduino.h>
+#include <Adafruit_NeoPixel.h>
 
-// -------------------- PINS --------------------
-#define POT_PIN        1     // Volume control
-#define SPEAKER_PIN    3     // PWM to amplifier
-#define BUTTON_PIN     4     // Main button
-#define LED_PIN        5     // Status LED
-#define BATTERY_PIN    0     // Battery sense (via divider)
+// ---------------- LED ----------------
+#define LED_PIN 0
+#define NUM_LED 1
 
-// -------------------- AUDIO --------------------
-#define AUDIO_RES      8
-#define BASE_FREQ      1000
+Adafruit_NeoPixel led(NUM_LED, LED_PIN, NEO_GRB + NEO_KHZ800);
 
-// -------------------- ESP-NOW ------------------
-typedef struct {
-  uint8_t trigger;
-} Message;
+// ---------------- PINS ----------------
+#define BUTTON_PIN 4
+#define AUDIO_PIN 3
+#define POT_PIN 1
 
-Message incoming;
+// ---------------- PWM AUDIO ----------------
+#define AUDIO_CH 0
+#define AUDIO_RES 8
 
-// -------------------- ESP-NOW CALLBACK ---------
-void onReceive(const esp_now_recv_info* info,
-               const uint8_t* data,
-               int len)
-{
-  if (len == sizeof(Message)) {
-    memcpy(&incoming, data, sizeof(Message));
+bool lastButton = HIGH;
 
-    if (incoming.trigger == 1) {
-      int pot = analogRead(POT_PIN);
-      int volume = map(pot, 0, 4095, 0, 255);
-
-      ledcWriteTone(SPEAKER_PIN, BASE_FREQ);
-      ledcWrite(SPEAKER_PIN, volume);
-
-      digitalWrite(LED_PIN, HIGH);
-      delay(300);
-      digitalWrite(LED_PIN, LOW);
-
-      ledcWriteTone(SPEAKER_PIN, 0);
-    }
-  }
+void setWhite() {
+  led.setPixelColor(0, led.Color(255, 255, 255));
+  led.show();
 }
 
-// -------------------- SETUP --------------------
+void setGreen() {
+  led.setPixelColor(0, led.Color(0, 255, 0));
+  led.show();
+}
+
+void startSound() {
+  int pot = analogRead(POT_PIN);          // 0–4095
+  int volume = map(pot, 0, 4095, 0, 255); // “volume feel”
+
+  ledcWriteTone(AUDIO_CH, 1200);         // tone frequency
+  ledcWrite(AUDIO_CH, volume);           // duty cycle
+}
+
+void stopSound() {
+  ledcWriteTone(AUDIO_CH, 0);
+  ledcWrite(AUDIO_CH, 0);
+}
+
 void setup() {
   Serial.begin(115200);
 
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-  pinMode(LED_PIN, OUTPUT);
-
   analogReadResolution(12);
 
-  // WiFi + ESP-NOW
-  WiFi.mode(WIFI_STA);
-  if (esp_now_init() != ESP_OK) {
-    Serial.println("ESP-NOW init failed");
-    return;
-  }
+  // LED
+  led.begin();
+  led.setBrightness(120);
+  setWhite();
 
-  esp_now_register_recv_cb(onReceive);
+  // PWM AUDIO SETUP
+  ledcAttach(AUDIO_PIN, 1200, AUDIO_RES);
 
-  // Audio PWM (ESP32-C3 API)
-  ledcAttach(SPEAKER_PIN, BASE_FREQ, AUDIO_RES);
-
-  digitalWrite(LED_PIN, HIGH);
-  delay(150);
-  digitalWrite(LED_PIN, LOW);
-
-  Serial.println("System powered ON");
+  Serial.println("PWM Audio System Ready");
 }
 
-// -------------------- LOOP ---------------------
 void loop() {
-  // Button example (optional local action)
-  if (digitalRead(BUTTON_PIN) == LOW) {
-    delay(20);
-    if (digitalRead(BUTTON_PIN) == LOW) {
-      digitalWrite(LED_PIN, HIGH);
-      delay(100);
-      digitalWrite(LED_PIN, LOW);
-    }
+  bool button = digitalRead(BUTTON_PIN);
+
+  // press event
+  if (lastButton == HIGH && button == LOW) {
+    Serial.println("Pressed");
+    setGreen();
+    startSound();
   }
 
-  // Battery indicator (optional)
-  int batt = analogRead(BATTERY_PIN);
-  if (batt < 3000) {
-    digitalWrite(LED_PIN, millis() % 500 < 250);
+  // release event
+  if (button == HIGH) {
+    setWhite();
+    stopSound();
   }
 
-  delay(20);
+  lastButton = button;
 }
